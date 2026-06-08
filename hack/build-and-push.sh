@@ -251,6 +251,35 @@ get_concrete_task_version() {
     yq '.metadata.labels."app.kubernetes.io/version"' "$task_file" | sed '/null/d' | tr -d '[:space:]'
 }
 
+# List local tasks to build and push.
+# Outputs lines of: task_dir task_name task_version
+# Supports flat, versioned, and nested layouts (see SHARED-CI.md). Task version
+# is taken from the app.kubernetes.io/version label, not the directory name.
+list_local_tasks() {
+    local task_file task_name file_name task_dir task_version rel
+
+    while IFS= read -r -d '' task_file; do
+        rel=${task_file#task/}
+        task_name=${rel%%/*}
+        file_name=$(basename "$task_file" .yaml)
+        if [ "$file_name" != "$task_name" ]; then
+            continue
+        fi
+        task_dir=$(dirname "$task_file")
+        task_version=$(get_concrete_task_version "$task_file")
+        if [ -z "$task_version" ]; then
+            echo "warning: skip ${task_file} since it has no app.kubernetes.io/version label" >&2
+            continue
+        fi
+        printf '%s %s %s\n' "$task_dir" "$task_name" "$task_version"
+    done < <(
+        find -L task -type f -name '*.yaml' \
+            ! -path '*/tests/*' \
+            ! -path '*/migrations/*' \
+            -print0 2>/dev/null || true
+    )
+}
+
 # Build and push a task as a Tekton bundle, that is tagged a floating tag and a fixed tag.
 # The task bundle reference with digest is output to stdout in the last line,
 # that is extracted from tkn-bundle-push.
@@ -507,10 +536,28 @@ generate_tagged_task_bundle() {
 determine_task_versions() {
     local -r task_name=${1:?Missing task name}
     local -r base_version=${2:?Missing base version}
-    # Try to list current and previous versions from task directory in ascending order.
-    # Symlinks pointing to archived versions are excluded.
-    if ! find "task/${task_name}/" -mindepth 1 -maxdepth 1 -type d -exec basename '{}' \; |
-        sort -t. -k 1,1n -k 2,2n -k 3,3n |
+    local -a versions=()
+    local flat_file="task/${task_name}/${task_name}.yaml"
+    local ver
+
+    if [ -f "$flat_file" ]; then
+        ver=$(get_concrete_task_version "$flat_file")
+        if [ -n "$ver" ]; then
+            versions+=("$ver")
+        fi
+    fi
+
+    while IFS= read -r ver; do
+        if [[ "$ver" =~ ^[0-9] ]]; then
+            versions+=("$ver")
+        fi
+    done < <(find "task/${task_name}/" -mindepth 1 -maxdepth 1 -type d -exec basename '{}' \; 2>/dev/null || true)
+
+    if [ ${#versions[@]} -eq 0 ]; then
+        return 0
+    fi
+
+    if ! printf '%s\n' "${versions[@]}" | sort -u -t. -k 1,1n -k 2,2n -k 3,3n |
         grep -B 1 -E "^${base_version}$" >/tmp/versions.txt
     then
         # Task version is not present in task directory.
@@ -674,8 +721,6 @@ build_push_tasks() {
         done <<< "$external_task_paths"
     fi
 
-    find -L task/*/* -maxdepth 0 -type d | awk -F '/' '{ print $0, $2, $3 }' | \
-
     while read -r task_dir task_name task_version
     do
         key="$task_name/$task_version"
@@ -770,7 +815,7 @@ build_push_tasks() {
         echo "info: inject task bundle to pipelines $task_bundle_with_digest" 1>&2
         real_task_name=$(yq e '.metadata.name' "$prepared_task_file")
         inject_bundle_ref_to_pipelines "$real_task_name" "$task_version" "$task_bundle_with_digest"
-    done
+    done < <(list_local_tasks)
 }
 
 

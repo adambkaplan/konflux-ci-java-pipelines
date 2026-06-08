@@ -59,7 +59,13 @@ fi
 
 cd "${TASK_DIR}"
 for recipe_path in **/recipe.yaml; do
-    task_path="${recipe_path%/recipe.yaml}/$(basename "${recipe_path%/*/*}").yaml"
+    task_dir="${recipe_path%/recipe.yaml}"
+    task_dir_name="$(basename "$task_dir")"
+    if [[ "$task_dir_name" == *-oci-ta ]]; then
+        task_path="${task_dir}/${task_dir_name}.yaml"
+    else
+        task_path="${task_dir}/$(basename "${recipe_path%/*/*}").yaml"
+    fi
     sponge=$(tash "${TASK_DIR}/${recipe_path}")
     echo "${sponge}" > "${task_path}"
     if ! git diff --quiet HEAD "${task_path}"; then

@@ -1,0 +1,15 @@
+---
+base: ../maven-deploy/maven-deploy.yaml
+add:
+  - use-source
+removeWorkspaces:
+  - source
+removeVolumes:
+  - scratch
+preferStepTemplate: true
+replacements:
+  workspaces.source.path: /var/workdir/source
+description: |-
+  Runs Maven clean, source:jar, and deploy goals, then deploys the staged
+  Maven repository layout to a container registry as an OCI image manifest
+  component build artifact.

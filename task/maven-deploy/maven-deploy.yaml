@@ -1,0 +1,232 @@
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: maven-deploy
+  annotations:
+    tekton.dev/pipelines.minVersion: 0.12.1
+    tekton.dev/tags: maven-build, konflux
+  labels:
+    app.kubernetes.io/version: "0.1"
+    build.appstudio.redhat.com/build_type: maven-repository
+spec:
+  description: |-
+    Runs Maven clean, source:jar, and deploy goals, then deploys the staged
+    Maven repository layout to a container registry as an OCI image manifest
+    component build artifact.
+  params:
+    - name: IMAGE
+      description: Reference of the OCI artifact this task will deploy to the registry.
+      type: string
+    - name: IMAGE_EXPIRES_AFTER
+      description: Delete image tag after specified time. Empty means to keep
+        the image tag. Time values could be something like 1h, 2d, 3w for
+        hours, days, and weeks, respectively.
+      type: string
+      default: ""
+    - name: caTrustConfigMapKey
+      description: The name of the key in the ConfigMap that contains the
+        CA bundle data.
+      type: string
+      default: ca-bundle.crt
+    - name: caTrustConfigMapName
+      description: The name of the ConfigMap to read CA bundle data from.
+      type: string
+      default: trusted-ca
+  results:
+    - name: IMAGE_DIGEST
+      description: Digest of the OCI artifact deployed to the registry
+    - name: IMAGE_REF
+      description: OCI artifact reference of the deployed artifact
+    - name: IMAGE_URL
+      description: OCI artifact repository and tag where the artifact was deployed
+  workspaces:
+    - name: source
+      description: The workspace containing the application source code.
+  volumes:
+    - name: trusted-ca
+      configMap:
+        items:
+          - key: $(params.caTrustConfigMapKey)
+            path: ca-bundle.crt
+        name: $(params.caTrustConfigMapName)
+        optional: true
+    - name: scratch
+      emptyDir: {}
+  stepTemplate:
+    volumeMounts:
+      - mountPath: /var/workdir
+        name: scratch
+      - mountPath: /etc/pki/tls/certs/ca-custom-bundle.crt
+        name: trusted-ca
+        subPath: ca-bundle.crt
+        readOnly: true
+  steps:
+    - name: maven-deploy
+      image: registry.access.redhat.com/ubi9/openjdk-25@sha256:bda8ae2e7670d3e8828d0e9341decb96cd1001257dee202322d3f9eb19bdb070
+      workingDir: $(workspaces.source.path)
+      script: |
+        #!/bin/bash
+        set -euo pipefail
+
+        mvn clean source:jar deploy \
+          -DaltDeploymentRepository=local::file:./target/stage-deploy
+
+        if [ ! -d target/stage-deploy ] || [ -z "$(ls -A target/stage-deploy 2>/dev/null)" ]; then
+          echo "ERROR: target/stage-deploy is missing or empty after mvn deploy"
+          exit 1
+        fi
+      computeResources:
+        limits:
+          memory: 8Gi
+        requests:
+          cpu: "1"
+          memory: 2Gi
+      securityContext:
+        runAsNonRoot: false
+        runAsUser: 0
+    - name: package-and-push
+      image: quay.io/konflux-ci/task-runner:1.5.0@sha256:200019314a50be5b6dd06f362c794c92a700583a522c5eee9a41e3eab7f706c5
+      workingDir: $(workspaces.source.path)
+      env:
+        - name: IMAGE
+          value: $(params.IMAGE)
+        - name: IMAGE_EXPIRES_AFTER
+          value: $(params.IMAGE_EXPIRES_AFTER)
+      script: |
+        #!/bin/bash
+        set -euo pipefail
+
+        CA_FILE=/etc/pki/tls/certs/ca-custom-bundle.crt
+        ORAS_TLS_ARGS=()
+        if [ -f "$CA_FILE" ]; then
+          ORAS_TLS_ARGS=(--ca-file "$CA_FILE")
+        fi
+
+        STAGE_DEPLOY="target/stage-deploy"
+        REPO_TAR="/var/workdir/repo.tar"
+        ARTIFACT_TYPE="application/vnd.konflux.maven.repository.v1+tar"
+        EMPTY_CONFIG_DIGEST="sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+
+        if [ ! -d "$STAGE_DEPLOY" ] || [ -z "$(ls -A "$STAGE_DEPLOY" 2>/dev/null)" ]; then
+          echo "ERROR: $STAGE_DEPLOY is missing or empty"
+          exit 1
+        fi
+
+        tar -cf "$REPO_TAR" -C "$STAGE_DEPLOY" .
+
+        LAYER_DIGEST="sha256:$(sha256sum "$REPO_TAR" | awk '{print $1}')"
+        LAYER_SIZE=$(stat -c%s "$REPO_TAR")
+        REPO="${IMAGE%:*}"
+
+        select-oci-auth "$IMAGE" > /var/workdir/auth.json
+
+        echo "Ensuring empty config blob exists"
+        if ! echo -n "{}" | retry oras blob push \
+          "${ORAS_TLS_ARGS[@]}" \
+          --registry-config /var/workdir/auth.json \
+          "${REPO}@${EMPTY_CONFIG_DIGEST}" \
+          --media-type application/vnd.oci.empty.v1+json --size 2 -
+        then
+          echo "Failed to push empty config blob"
+          exit 1
+        fi
+
+        echo "Pushing Maven repository layer"
+        if ! retry oras blob push \
+          "${ORAS_TLS_ARGS[@]}" \
+          --registry-config /var/workdir/auth.json \
+          "${REPO}@${LAYER_DIGEST}" \
+          --media-type application/vnd.oci.image.layer.v1.tar \
+          --size "$LAYER_SIZE" \
+          "$REPO_TAR"
+        then
+          echo "Failed to push repository tar layer"
+          exit 1
+        fi
+
+        CREATED="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        if [ -n "$IMAGE_EXPIRES_AFTER" ]; then
+          jq -n \
+            --arg artifactType "$ARTIFACT_TYPE" \
+            --arg layerDigest "$LAYER_DIGEST" \
+            --argjson layerSize "$LAYER_SIZE" \
+            --arg created "$CREATED" \
+            --arg expires "$IMAGE_EXPIRES_AFTER" \
+            '{
+              schemaVersion: 2,
+              mediaType: "application/vnd.oci.image.manifest.v1+json",
+              artifactType: $artifactType,
+              config: {
+                mediaType: "application/vnd.oci.empty.v1+json",
+                digest: "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+                size: 2,
+                data: "e30="
+              },
+              layers: [{
+                mediaType: "application/vnd.oci.image.layer.v1.tar",
+                digest: $layerDigest,
+                size: $layerSize
+              }],
+              annotations: {
+                "org.opencontainers.image.created": $created,
+                "quay.expires-after": $expires
+              }
+            }' > /var/workdir/artifact-manifest.json
+        else
+          jq -n \
+            --arg artifactType "$ARTIFACT_TYPE" \
+            --arg layerDigest "$LAYER_DIGEST" \
+            --argjson layerSize "$LAYER_SIZE" \
+            --arg created "$CREATED" \
+            '{
+              schemaVersion: 2,
+              mediaType: "application/vnd.oci.image.manifest.v1+json",
+              artifactType: $artifactType,
+              config: {
+                mediaType: "application/vnd.oci.empty.v1+json",
+                digest: "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+                size: 2,
+                data: "e30="
+              },
+              layers: [{
+                mediaType: "application/vnd.oci.image.layer.v1.tar",
+                digest: $layerDigest,
+                size: $layerSize
+              }],
+              annotations: {
+                "org.opencontainers.image.created": $created
+              }
+            }' > /var/workdir/artifact-manifest.json
+        fi
+
+        echo "Deploying OCI artifact manifest to ${IMAGE}"
+        if ! retry oras manifest push \
+          "${ORAS_TLS_ARGS[@]}" \
+          --registry-config /var/workdir/auth.json \
+          "$IMAGE" /var/workdir/artifact-manifest.json
+        then
+          echo "Failed to push artifact manifest"
+          exit 1
+        fi
+
+        if ! RESULTING_DIGEST=$(retry oras resolve "${ORAS_TLS_ARGS[@]}" --registry-config /var/workdir/auth.json "$IMAGE"); then
+          echo "Failed to resolve deployed artifact digest"
+          exit 1
+        fi
+
+        echo -n "$IMAGE" | tee "$(results.IMAGE_URL.path)"
+        echo -n "$RESULTING_DIGEST" | tee "$(results.IMAGE_DIGEST.path)"
+        echo -n "${IMAGE}@${RESULTING_DIGEST}" | tee "$(results.IMAGE_REF.path)"
+      computeResources:
+        limits:
+          memory: 4Gi
+        requests:
+          cpu: "1"
+          memory: 1Gi
+      securityContext:
+        capabilities:
+          add:
+            - SETFCAP
+        runAsNonRoot: false
+        runAsUser: 0

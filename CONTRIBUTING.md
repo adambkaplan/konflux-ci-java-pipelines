@@ -57,17 +57,20 @@ Install the Tekton CLI with `make install-tkn` if needed.
 # One-time bootstrap (~15–30 min): kind cluster + konflux-ci dependencies
 make setup
 
-# Run tests for the default task (task/maven-deploy-oci-ta/0.1)
+# Run tests for the default task (task/maven-deploy)
 make test
 
 # Run tests for a specific task directory
-make test TASK=task/maven-deploy-oci-ta/0.1
+make test TASK=task/maven-deploy
+make test TASK=task/maven-deploy-oci-ta
 
 # Run a single test pipeline
-make test TASK=task/maven-deploy-oci-ta/0.1/tests/test-maven-deploy-oci-ta-happy-path.yaml
+make test TASK=task/maven-deploy/tests/test-maven-deploy-happy-path.yaml
+make test TASK=task/maven-deploy-oci-ta/tests/test-maven-deploy-oci-ta-happy-path.yaml
 
 # Full CI-equivalent run (bootstrap + validate + test)
-make ci TASK=task/maven-deploy-oci-ta/0.1
+make ci TASK=task/maven-deploy
+make ci TASK=task/maven-deploy-oci-ta
 
 # Tear down the kind cluster
 make clean

@@ -15,11 +15,9 @@ spec:
     Maven repository layout to a container registry as an OCI image manifest
     component build artifact.
   params:
-    - name: SOURCE_ARTIFACT
-      description: The Trusted Artifact URI pointing to the application source code.
-      type: string
     - name: IMAGE
-      description: Reference of the OCI artifact this task will deploy to the registry.
+      description: Reference of the OCI artifact this task will deploy to
+        the registry.
       type: string
     - name: IMAGE_EXPIRES_AFTER
       description: Delete image tag after specified time. Empty means to keep
@@ -27,6 +25,10 @@ spec:
         hours, days, and weeks, respectively.
       type: string
       default: ""
+    - name: SOURCE_ARTIFACT
+      description: The Trusted Artifact URI pointing to the artifact with
+        the application source code.
+      type: string
     - name: caTrustConfigMapKey
       description: The name of the key in the ConfigMap that contains the
         CA bundle data.
@@ -42,7 +44,8 @@ spec:
     - name: IMAGE_REF
       description: OCI artifact reference of the deployed artifact
     - name: IMAGE_URL
-      description: OCI artifact repository and tag where the artifact was deployed
+      description: OCI artifact repository and tag where the artifact was
+        deployed
   volumes:
     - name: trusted-ca
       configMap:
@@ -55,15 +58,15 @@ spec:
       emptyDir: {}
   stepTemplate:
     volumeMounts:
-      - mountPath: /var/workdir
-        name: workdir
       - mountPath: /etc/pki/tls/certs/ca-custom-bundle.crt
         name: trusted-ca
-        subPath: ca-bundle.crt
         readOnly: true
+        subPath: ca-bundle.crt
+      - mountPath: /var/workdir
+        name: workdir
   steps:
     - name: use-trusted-artifact
-      image: quay.io/konflux-ci/build-trusted-artifacts:latest@sha256:fb7ce11be542bc524be2c5ea78fd73c87a8a8cbf333905fcdf8b7cb700ad178a
+      image: quay.io/konflux-ci/build-trusted-artifacts:latest@sha256:5307eb0dd71e493851632526497b85640efe46cf2e1934856724489260c968ae
       args:
         - use
         - $(params.SOURCE_ARTIFACT)=/var/workdir/source
@@ -124,15 +127,14 @@ spec:
         LAYER_SIZE=$(stat -c%s "$REPO_TAR")
         REPO="${IMAGE%:*}"
 
-        select-oci-auth "$IMAGE" > /var/workdir/auth.json
+        select-oci-auth "$IMAGE" >/var/workdir/auth.json
 
         echo "Ensuring empty config blob exists"
         if ! echo -n "{}" | retry oras blob push \
           "${ORAS_TLS_ARGS[@]}" \
           --registry-config /var/workdir/auth.json \
           "${REPO}@${EMPTY_CONFIG_DIGEST}" \
-          --media-type application/vnd.oci.empty.v1+json --size 2 -
-        then
+          --media-type application/vnd.oci.empty.v1+json --size 2 -; then
           echo "Failed to push empty config blob"
           exit 1
         fi
@@ -144,8 +146,7 @@ spec:
           "${REPO}@${LAYER_DIGEST}" \
           --media-type application/vnd.oci.image.layer.v1.tar \
           --size "$LAYER_SIZE" \
-          "$REPO_TAR"
-        then
+          "$REPO_TAR"; then
           echo "Failed to push repository tar layer"
           exit 1
         fi
@@ -177,7 +178,7 @@ spec:
                 "org.opencontainers.image.created": $created,
                 "quay.expires-after": $expires
               }
-            }' > /var/workdir/artifact-manifest.json
+            }' >/var/workdir/artifact-manifest.json
         else
           jq -n \
             --arg artifactType "$ARTIFACT_TYPE" \
@@ -202,15 +203,14 @@ spec:
               annotations: {
                 "org.opencontainers.image.created": $created
               }
-            }' > /var/workdir/artifact-manifest.json
+            }' >/var/workdir/artifact-manifest.json
         fi
 
         echo "Deploying OCI artifact manifest to ${IMAGE}"
         if ! retry oras manifest push \
           "${ORAS_TLS_ARGS[@]}" \
           --registry-config /var/workdir/auth.json \
-          "$IMAGE" /var/workdir/artifact-manifest.json
-        then
+          "$IMAGE" /var/workdir/artifact-manifest.json; then
           echo "Failed to push artifact manifest"
           exit 1
         fi

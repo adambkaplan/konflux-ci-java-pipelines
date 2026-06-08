@@ -10,5 +10,4 @@
 
 ### Added
 
-- The initial version of the `maven-deploy-oci-ta` task, generated from
-  `recipe.yaml` and the `maven-deploy` base task.
+- The initial version of the `maven-deploy` task.

@@ -1,0 +1,91 @@
+# WARNING: This is an auto generated file, do not modify this file directly
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  labels:
+    pipelines.openshift.io/runtime: generic
+    pipelines.openshift.io/strategy: maven-repository
+    pipelines.openshift.io/used-by: build-cloud
+  name: maven-build
+spec:
+  description: |
+    This pipeline builds Maven project artifacts and deploys them as a Konflux
+    component build artifact OCI image manifest.
+
+    v1 does not prefetch dependencies. Security scans run via IntegrationTestScenarios
+    per ADR-0048 (https://github.com/konflux-ci/architecture/blob/main/ADR/0048-movable-build-tests.md).
+
+    _Uses `git-clone` to clone the source repository into a workspace PVC, and
+    `maven-deploy` to run Maven and deploy the staged repository layout as a
+    Konflux component build artifact OCI image manifest._
+  finally: []
+  params:
+  - description: Source Repository URL
+    name: git-url
+    type: string
+  - default: ""
+    description: Revision of the Source Repository
+    name: revision
+    type: string
+  - description: Fully Qualified Output Image
+    name: output-image
+    type: string
+  - default: ""
+    description: Image tag expiration time, time values could be something like 1h,
+      2d, 3w for hours, days, and weeks, respectively.
+    name: image-expires-after
+    type: string
+  - default: "false"
+    description: Enable cache proxy configuration
+    name: enable-cache-proxy
+  results:
+  - name: IMAGE_URL
+    value: $(tasks.build-oci-artifact.results.IMAGE_URL)
+  - name: IMAGE_DIGEST
+    value: $(tasks.build-oci-artifact.results.IMAGE_DIGEST)
+  - name: CHAINS-GIT_URL
+    value: $(tasks.clone-repository.results.url)
+  - name: CHAINS-GIT_COMMIT
+    value: $(tasks.clone-repository.results.commit)
+  tasks:
+  - name: init
+    params:
+    - name: enable-cache-proxy
+      value: $(params.enable-cache-proxy)
+    taskRef:
+      name: init
+      version: "0.4"
+  - name: clone-repository
+    params:
+    - name: url
+      value: $(params.git-url)
+    - name: revision
+      value: $(params.revision)
+    runAfter:
+    - init
+    taskRef:
+      name: git-clone
+      version: "0.1"
+    workspaces:
+    - name: output
+      workspace: workspace
+    - name: basic-auth
+      workspace: git-auth
+  - name: build-oci-artifact
+    params:
+    - name: IMAGE
+      value: $(params.output-image)
+    - name: IMAGE_EXPIRES_AFTER
+      value: $(params.image-expires-after)
+    runAfter:
+    - clone-repository
+    taskRef:
+      name: maven-deploy
+      version: "0.1"
+    workspaces:
+    - name: source
+      workspace: workspace
+  workspaces:
+  - name: workspace
+  - name: git-auth
+    optional: true

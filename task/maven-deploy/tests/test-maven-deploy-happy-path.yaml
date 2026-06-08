@@ -1,0 +1,178 @@
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: test-maven-deploy-happy-path
+spec:
+  description: |
+    Test the maven-deploy task with a minimal Maven project and verify
+    the deployed OCI artifact contains the expected Maven repository layout.
+  workspaces:
+    - name: tests-workspace
+  tasks:
+    - name: create-maven-project
+      taskSpec:
+        workspaces:
+          - name: tests-workspace
+        steps:
+          - name: create-maven-project
+            image: quay.io/konflux-ci/task-runner:1.5.0@sha256:200019314a50be5b6dd06f362c794c92a700583a522c5eee9a41e3eab7f706c5
+            script: |
+              #!/usr/bin/env bash
+              set -euo pipefail
+
+              SOURCE_DIR="$(workspaces.tests-workspace.path)"
+              mkdir -p "${SOURCE_DIR}/src/main/java/com/example"
+
+              cat > "${SOURCE_DIR}/pom.xml" << 'EOF'
+              <?xml version="1.0" encoding="UTF-8"?>
+              <project xmlns="http://maven.apache.org/POM/4.0.0"
+                       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                       xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+                <modelVersion>4.0.0</modelVersion>
+                <groupId>com.example</groupId>
+                <artifactId>test-app</artifactId>
+                <version>1.0.0</version>
+                <packaging>jar</packaging>
+                <properties>
+                  <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+                  <maven.compiler.release>21</maven.compiler.release>
+                </properties>
+              </project>
+              EOF
+
+              cat > "${SOURCE_DIR}/src/main/java/com/example/App.java" << 'EOF'
+              package com.example;
+
+              public class App {
+                  public static void main(String[] args) {
+                      System.out.println("hello world");
+                  }
+              }
+              EOF
+
+              echo "Created Maven project:"
+              find "${SOURCE_DIR}" -type f -exec echo "  {}" \;
+      workspaces:
+        - name: tests-workspace
+          workspace: tests-workspace
+    - name: run-maven-deploy
+      taskRef:
+        name: maven-deploy
+      params:
+        - name: IMAGE
+          value: registry-service.kind-registry/test-maven-repo:latest
+        - name: caTrustConfigMapName
+          value: trusted-ca
+        - name: caTrustConfigMapKey
+          value: ca-bundle.crt
+      runAfter:
+        - create-maven-project
+      workspaces:
+        - name: source
+          workspace: tests-workspace
+    - name: verify-maven-repo-artifact
+      params:
+        - name: IMAGE_DIGEST
+          value: $(tasks.run-maven-deploy.results.IMAGE_DIGEST)
+        - name: IMAGE_REF
+          value: $(tasks.run-maven-deploy.results.IMAGE_REF)
+        - name: IMAGE_URL
+          value: $(tasks.run-maven-deploy.results.IMAGE_URL)
+        - name: caTrustConfigMapName
+          value: trusted-ca
+        - name: caTrustConfigMapKey
+          value: ca-bundle.crt
+      taskSpec:
+        params:
+          - name: IMAGE_DIGEST
+          - name: IMAGE_REF
+          - name: IMAGE_URL
+          - name: caTrustConfigMapName
+          - name: caTrustConfigMapKey
+        volumes:
+          - name: trusted-ca
+            configMap:
+              items:
+                - key: $(params.caTrustConfigMapKey)
+                  path: ca-bundle.crt
+              name: $(params.caTrustConfigMapName)
+        stepTemplate:
+          volumeMounts:
+            - name: trusted-ca
+              mountPath: /etc/pki/tls/certs/ca-custom-bundle.crt
+              subPath: ca-bundle.crt
+              readOnly: true
+        steps:
+          - name: verify-oci-artifact
+            env:
+              - name: IMAGE_DIGEST
+                value: $(params.IMAGE_DIGEST)
+              - name: IMAGE_REF
+                value: $(params.IMAGE_REF)
+              - name: IMAGE_URL
+                value: $(params.IMAGE_URL)
+            image: quay.io/konflux-ci/task-runner:1.5.0@sha256:200019314a50be5b6dd06f362c794c92a700583a522c5eee9a41e3eab7f706c5
+            securityContext:
+              runAsUser: 0
+              runAsNonRoot: false
+            script: |
+              #!/usr/bin/env bash
+              set -euo pipefail
+
+              CA_FILE=/etc/pki/tls/certs/ca-custom-bundle.crt
+              ORAS_TLS_ARGS=()
+              if [[ -f "${CA_FILE}" ]]; then
+                ORAS_TLS_ARGS=(--ca-file "${CA_FILE}")
+              fi
+
+              echo "Verifying task results..."
+              if [[ -z "${IMAGE_DIGEST}" || -z "${IMAGE_REF}" || -z "${IMAGE_URL}" ]]; then
+                echo "ERROR: One or more task results are empty"
+                exit 1
+              fi
+              if [[ "${IMAGE_REF}" != *"@sha256:"* ]]; then
+                echo "ERROR: IMAGE_REF does not contain a digest: ${IMAGE_REF}"
+                exit 1
+              fi
+
+              echo "Fetching OCI artifact manifest from ${IMAGE_REF}"
+              manifest=$(oras manifest fetch "${ORAS_TLS_ARGS[@]}" "${IMAGE_REF}")
+
+              artifact_type=$(echo "${manifest}" | jq -r .artifactType)
+              if [[ "${artifact_type}" != "application/vnd.konflux.maven.repository.v1+tar" ]]; then
+                echo "ERROR: unexpected artifactType: ${artifact_type}"
+                exit 1
+              fi
+              echo "artifactType verified"
+
+              layer_digest=$(echo "${manifest}" | jq -r '.layers[0].digest')
+              if [[ -z "${layer_digest}" || "${layer_digest}" == "null" ]]; then
+                echo "ERROR: manifest has no layer digest"
+                exit 1
+              fi
+
+              repo="${IMAGE_REF%%@*}"
+              echo "Fetching repository layer ${layer_digest}"
+              oras blob fetch "${ORAS_TLS_ARGS[@]}" "${repo}@${layer_digest}" -o /tmp/repo.tar
+
+              mkdir -p /tmp/repo
+              tar -xf /tmp/repo.tar -C /tmp/repo
+
+              for path in \
+                com/example/test-app/1.0.0/test-app-1.0.0.jar \
+                com/example/test-app/1.0.0/test-app-1.0.0-sources.jar \
+                com/example/test-app/maven-metadata.xml
+              do
+                if [[ -f "/tmp/repo/${path}" ]]; then
+                  echo "Found expected artifact: ${path}"
+                else
+                  echo "ERROR: missing expected artifact: ${path}"
+                  find /tmp/repo -type f | sort
+                  exit 1
+                fi
+              done
+
+              echo "Maven repository OCI artifact verified successfully"
+      runAfter:
+        - run-maven-deploy

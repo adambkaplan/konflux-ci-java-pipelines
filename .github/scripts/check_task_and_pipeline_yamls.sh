@@ -7,11 +7,16 @@ for task_folder in task/*/; do
   if [ -d "$task_folder" ]; then
     task="$(basename "$task_folder")"
     echo ">>> Task: $task"
+    flat_task_file="${task_folder%/}/${task}.yaml"
+    if [ -f "$flat_task_file" ]; then
+      kubectl apply -f "$flat_task_file" --dry-run=server
+    fi
     (
       cd "$task_folder"
       for version in */; do
-        if [ -d "$version" ]; then
-          kubectl apply -f "$version/$task.yaml" --dry-run=server
+        versioned_task_file="${version}${task}.yaml"
+        if [ -f "$versioned_task_file" ]; then
+          kubectl apply -f "$versioned_task_file" --dry-run=server
         fi
       done
     )
