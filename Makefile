@@ -1,9 +1,10 @@
-# Local task test environment — mirrors .github/workflows/run-task-tests.yaml
+# Local Tekton test environment — mirrors .github/workflows/run-*-tests.yaml
 #
 # Quick start:
-#   make setup          # one-time kind + konflux-ci bootstrap (~15–30 min)
-#   make test           # run integration tests for TASK
-#   make clean          # delete the kind cluster
+#   make setup              # one-time kind + konflux-ci bootstrap (~15–30 min)
+#   make test               # run task integration tests for TASK
+#   make test-pipelines     # run pipeline integration tests for PIPELINE
+#   make clean              # delete the kind cluster
 
 SHELL := /usr/bin/env bash
 .SHELLFLAGS := -eu -o pipefail -c
@@ -14,41 +15,48 @@ KONFLUX_CI_DIR ?= .local/konflux-ci
 
 KIND_CLUSTER ?= kind
 TASK ?= task/maven-deploy
+PIPELINE ?= pipelines/maven-build
 TKN_VERSION ?= 0.38.1
 
 REPO_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 TEST_SCRIPT := $(REPO_ROOT)/.github/scripts/test_tekton_tasks.sh
+PIPELINE_TEST_SCRIPT := $(REPO_ROOT)/.github/scripts/test_tekton_pipelines.sh
 VALIDATE_SCRIPT := $(REPO_ROOT)/.github/scripts/check_task_and_pipeline_yamls.sh
 
 .PHONY: help check-prereqs install-tkn fetch-konflux-ci kind-up kind-down \
-        deploy-deps deploy-konflux setup validate-tasks test ci clean
+        deploy-deps deploy-konflux setup validate-tasks validate-pipelines \
+        test test-pipelines ci ci-pipelines clean
 
 .DEFAULT_GOAL := help
 
 help: ## Show targets and key variables
 	@printf '%s\n' \
-		'Local task test environment (see CONTRIBUTING.md for details)' \
+		'Local Tekton test environment (see CONTRIBUTING.md for details)' \
 		'' \
 		'Targets:' \
-		'  setup            Full bootstrap: prereqs, konflux-ci, kind, deps, konflux' \
-		'  test             Run integration tests for $$(TASK)' \
-		'  ci               setup + validate-tasks + test' \
-		'  clean            Delete the kind cluster (alias: kind-down)' \
+		'  setup              Full bootstrap: prereqs, konflux-ci, kind, deps, konflux' \
+		'  test               Run task integration tests for $$(TASK)' \
+		'  test-pipelines     Run pipeline integration tests for $$(PIPELINE)' \
+		'  ci                 setup + validate-tasks + test' \
+		'  ci-pipelines       setup + validate-pipelines + test-pipelines' \
+		'  clean              Delete the kind cluster (alias: kind-down)' \
 		'' \
 		'Bootstrap (individual steps):' \
-		'  fetch-konflux-ci Clone or update konflux-ci at pinned ref' \
-		'  kind-up          Create kind cluster if missing' \
-		'  kind-down        Delete kind cluster' \
-		'  deploy-deps      Deploy konflux-ci dependencies' \
-		'  deploy-konflux   Deploy Konflux and test resources' \
+		'  fetch-konflux-ci   Clone or update konflux-ci at pinned ref' \
+		'  kind-up            Create kind cluster if missing' \
+		'  kind-down          Delete kind cluster' \
+		'  deploy-deps        Deploy konflux-ci dependencies' \
+		'  deploy-konflux     Deploy Konflux and test resources' \
 		'' \
 		'Other:' \
-		'  check-prereqs    Verify required tools are installed' \
-		'  install-tkn      Download Tekton CLI to ~/.local/bin' \
-		'  validate-tasks   Dry-run apply tasks and pipelines (mutates pipeline YAML)' \
+		'  check-prereqs      Verify required tools are installed' \
+		'  install-tkn        Download Tekton CLI to ~/.local/bin' \
+		'  validate-tasks     Dry-run apply tasks and pipelines' \
+		'  validate-pipelines Alias for validate-tasks' \
 		'' \
 		'Variables:' \
 		'  TASK=$(TASK)' \
+		'  PIPELINE=$(PIPELINE)' \
 		'  KIND_CLUSTER=$(KIND_CLUSTER)' \
 		'  KONFLUX_CI_DIR=$(KONFLUX_CI_DIR)' \
 		'  KONFLUX_CI_REF=$(KONFLUX_CI_REF)'
@@ -125,13 +133,17 @@ deploy-konflux: deploy-deps ## Deploy Konflux and test resources
 
 setup: check-prereqs deploy-konflux ## Full local test environment bootstrap
 	@printf '\nSetup complete. Run tests with: make test TASK=%s\n' "$(TASK)"
+	@printf 'Or pipeline tests with: make test-pipelines PIPELINE=%s\n' "$(PIPELINE)"
 
-validate-tasks: check-prereqs ## Dry-run apply tasks and pipelines (mutates pipeline YAML in-place)
-	@printf 'NOTE: validate-tasks removes taskRef.version from pipeline YAML files.\n'
-	@printf '      Revert with git checkout -- pipelines/ if needed.\n'
+validate-tasks validate-pipelines: check-prereqs ## Dry-run apply tasks and rendered pipelines
 	@cd "$(REPO_ROOT)" && "$(VALIDATE_SCRIPT)"
 
 test: check-prereqs ## Run integration tests for TASK
 	@cd "$(REPO_ROOT)" && "$(TEST_SCRIPT)" "$(TASK)"
 
-ci: setup validate-tasks test ## CI-equivalent: bootstrap, validate, and test
+test-pipelines: check-prereqs ## Run integration tests for PIPELINE
+	@cd "$(REPO_ROOT)" && "$(PIPELINE_TEST_SCRIPT)" "$(PIPELINE)"
+
+ci: setup validate-tasks test ## CI-equivalent for tasks: bootstrap, validate, and test
+
+ci-pipelines: setup validate-pipelines test-pipelines ## CI-equivalent for pipelines

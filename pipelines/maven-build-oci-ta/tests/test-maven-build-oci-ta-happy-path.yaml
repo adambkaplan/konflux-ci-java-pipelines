@@ -1,0 +1,22 @@
+---
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  name: test-maven-build-oci-ta-happy-path
+spec:
+  pipelineRef:
+    name: maven-build-oci-ta
+  params:
+    - name: git-url
+      value: https://github.com/hermetoproject/integration-tests.git
+    - name: revision
+      value: maven/e2e
+    - name: output-image
+      value: registry-service.kind-registry/test-maven-repo-oci-ta:latest
+    - name: image-expires-after
+      value: ""
+    - name: enable-cache-proxy
+      value: "false"
+  taskRunTemplate:
+    serviceAccountName: appstudio-pipeline
+  workspaces: []

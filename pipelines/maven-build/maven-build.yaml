@@ -61,6 +61,8 @@ spec:
       value: $(params.git-url)
     - name: revision
       value: $(params.revision)
+    - name: subdirectory
+      value: .
     runAfter:
     - init
     taskRef:

@@ -7,6 +7,7 @@
 * [How to Submit Pull Requests](#how-to-submit-pull-requests)
   * [Development Workflow](#development-workflow)
   * [Local Task Testing](#local-task-testing)
+  * [Local Pipeline Testing](#local-pipeline-testing)
   * [Pull Request Guidelines](#pull-request-guidelines)
   * [Security Best Practices](#security-best-practices)
 
@@ -84,8 +85,40 @@ make setup KONFLUX_CI_DIR=/path/to/konflux-ci
 ```
 
 `make validate-tasks` dry-runs `kubectl apply` for all tasks and pipelines.
-It removes `taskRef.version` from pipeline YAML in-place (same as CI); revert with
-`git checkout -- pipelines/` if needed.
+Pipeline YAML is rendered to a temporary copy (local tasks keep name-only refs;
+external tasks use Tekton bundle resolver refs). Source files are not modified.
+
+### Local Pipeline Testing
+
+Pipeline integration tests run in CI via
+[`.github/workflows/run-pipeline-tests.yaml`](.github/workflows/run-pipeline-tests.yaml).
+The [Makefile](Makefile) mirrors that workflow for local development.
+
+```bash
+# One-time bootstrap (~15–30 min): kind cluster + konflux-ci dependencies
+make setup
+
+# Run tests for the default pipeline (pipelines/maven-build)
+make test-pipelines
+
+# Run tests for a specific pipeline directory
+make test-pipelines PIPELINE=pipelines/maven-build
+make test-pipelines PIPELINE=pipelines/maven-build-oci-ta
+
+# Run a single PipelineRun test
+make test-pipelines PIPELINE=pipelines/maven-build/tests/test-maven-build-happy-path.yaml
+
+# Full CI-equivalent run (bootstrap + validate + test)
+make ci-pipelines PIPELINE=pipelines/maven-build
+
+# Tear down the kind cluster
+make clean
+```
+
+Pipeline tests live in `pipelines/<name>/tests/test-*.yaml` as Tekton `PipelineRun`
+objects. The pipeline under test is applied locally to the test namespace (not bundled).
+Local tasks are applied to the namespace; external tasks are resolved via Tekton's
+bundle resolver at runtime.
 
 For troubleshooting (Docker Hub rate limits, inotify limits on Linux, registry setup),
 see the [konflux-ci bootstrapping guide](https://github.com/konflux-ci/konflux-ci?tab=readme-ov-file#bootstrapping-the-cluster).

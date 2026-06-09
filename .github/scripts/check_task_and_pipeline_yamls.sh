@@ -2,6 +2,10 @@
 shopt -s nullglob
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=render_pipeline_for_local_test.sh
+source "${SCRIPT_DIR}/render_pipeline_for_local_test.sh"
+
 echo ">>> Apply tasks"
 for task_folder in task/*/; do
   if [ -d "$task_folder" ]; then
@@ -47,15 +51,16 @@ for pipeline in */; do
         to_apply+=("$yaml")
       fi
     done
-    
+
     for file in "${to_apply[@]}"; do
-      # Pipeline files contain a version field (that is not a part of the pipeline spec) in the taskRef
-      # that is supposed to get processed, and then removed by the hack/build-and-push.sh script. 
-      # We don't call that script and for our purposes we can just remove the version field. 
-      # Otherwise the pipeline would get rejected by kubectl as it would not be valid.
-      yq eval --inplace "del(.spec.tasks[].taskRef.version)" "$file"
-      yq eval --inplace "del(.spec.finally[].taskRef.version)" "$file"
-      kubectl apply -f "$file" --dry-run=server
+      rendered_file=$(mktemp /tmp/pipeline-rendered.XXXXXX)
+      cleanup() { rm -f "${rendered_file}"; }
+      trap cleanup EXIT
+
+      render_pipeline_for_local_test "$file" "$rendered_file"
+      kubectl apply -f "$rendered_file" --dry-run=server
+      rm -f "${rendered_file}"
+      trap - EXIT
     done
   fi
 done

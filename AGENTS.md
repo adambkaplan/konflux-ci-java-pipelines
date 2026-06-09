@@ -62,6 +62,7 @@ The version label controls the release version, not the directory name.
    `pipelines/<name>/<name>.yaml`.
 4. Follow patterns in [pipelines/README.md](pipelines/README.md) and
    [build-definitions/pipelines](https://github.com/konflux-ci/build-definitions/tree/main/pipelines).
+5. Add or update integration tests under `pipelines/<name>/tests/test-*.yaml`.
 
 Pipelines author abstract task references (`taskRef.name` + `taskRef.version`). Bundle
 resolution happens at publish time in `hack/build-and-push.sh`.
@@ -111,20 +112,27 @@ Run checks relevant to your change:
 | TA variants up to date | `hack/generate-ta-tasks.sh` then review diff |
 | Shell in YAML | `hack/checkton-local.sh` (requires podman) |
 | Task integration tests | `make test TASK=task/<name>/...` (requires prior `make setup`) |
-| Full local CI | `make ci TASK=...` |
+| Pipeline integration tests | `make test-pipelines PIPELINE=pipelines/<name>/...` |
+| Full local task CI | `make ci TASK=...` |
+| Full local pipeline CI | `make ci-pipelines PIPELINE=...` |
 | EC policy (optional) | `hack/ec-checks.sh` |
 
 **Local testing prerequisites:** `kubectl`, `kind`, `tkn`, `jq`, `yq`, `git`, `openssl`.
 Install `tkn` with `make install-tkn`. See `make help` and [CONTRIBUTING.md](CONTRIBUTING.md).
 
-**Trap:** `make validate-tasks` strips `taskRef.version` from pipeline YAML in-place.
-Revert with `git checkout -- pipelines/` if you run it locally.
-
-Integration test conventions (from SHARED-CI):
+Task integration test conventions (from SHARED-CI):
 
 - Tests live in `task/<name>/tests/test-*.yaml` as Tekton `Pipeline` objects.
 - Each test pipeline must declare a workspace named `tests-workspace`.
 - Optional `pre-apply-task-hook.sh` runs before the task is applied.
+
+Pipeline integration test conventions:
+
+- Tests live in `pipelines/<name>/tests/test-*.yaml` as Tekton `PipelineRun` objects.
+- PipelineRun must reference the pipeline via `spec.pipelineRef.name`.
+- Provide params and workspace bindings in the PipelineRun YAML.
+- Optional `pre-apply-pipeline-hook.sh` runs before the pipeline is applied.
+- The pipeline is applied locally; external tasks resolve via bundle resolver.
 
 ## Pull request and commit expectations
 
@@ -133,7 +141,7 @@ Integration test conventions (from SHARED-CI):
 - Add `Assisted-by: <tool-name>` when AI-assisted.
 - PR description must explain changes and how they were tested.
 - All CI checks must pass: Checkton, versioning, kustomize build, TA check, task-lint,
-  task integration tests.
+  task integration tests, and pipeline integration tests when applicable.
 - Breaking task changes require migration scripts validated by CI.
 
 Before opening a PR, check [.github/pull_request_template.md](.github/pull_request_template.md)
