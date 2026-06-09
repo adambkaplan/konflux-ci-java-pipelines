@@ -17,6 +17,7 @@ KIND_CLUSTER ?= kind
 TASK ?= task/maven-deploy
 PIPELINE ?= pipelines/maven-build
 TKN_VERSION ?= 0.38.1
+TEKTON_DASHBOARD_PORT ?= 9097
 
 REPO_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 TEST_SCRIPT := $(REPO_ROOT)/.github/scripts/test_tekton_tasks.sh
@@ -25,7 +26,7 @@ VALIDATE_SCRIPT := $(REPO_ROOT)/.github/scripts/check_task_and_pipeline_yamls.sh
 
 .PHONY: help check-prereqs install-tkn fetch-konflux-ci kind-up kind-down \
         deploy-deps deploy-konflux setup validate-tasks validate-pipelines \
-        test test-pipelines ci ci-pipelines clean
+        test test-pipelines ci ci-pipelines tekton-dashboard clean
 
 .DEFAULT_GOAL := help
 
@@ -39,6 +40,7 @@ help: ## Show targets and key variables
 		'  test-pipelines     Run pipeline integration tests for $$(PIPELINE)' \
 		'  ci                 setup + validate-tasks + test' \
 		'  ci-pipelines       setup + validate-pipelines + test-pipelines' \
+		'  tekton-dashboard   Install read-only Tekton Dashboard and port-forward' \
 		'  clean              Delete the kind cluster (alias: kind-down)' \
 		'' \
 		'Bootstrap (individual steps):' \
@@ -59,7 +61,8 @@ help: ## Show targets and key variables
 		'  PIPELINE=$(PIPELINE)' \
 		'  KIND_CLUSTER=$(KIND_CLUSTER)' \
 		'  KONFLUX_CI_DIR=$(KONFLUX_CI_DIR)' \
-		'  KONFLUX_CI_REF=$(KONFLUX_CI_REF)'
+		'  KONFLUX_CI_REF=$(KONFLUX_CI_REF)' \
+		'  TEKTON_DASHBOARD_PORT=$(TEKTON_DASHBOARD_PORT)'
 
 check-prereqs: ## Verify kubectl, kind, jq, yq, git, openssl, and tkn are available
 	@missing=(); \
@@ -147,3 +150,6 @@ test-pipelines: check-prereqs ## Run integration tests for PIPELINE
 ci: setup validate-tasks test ## CI-equivalent for tasks: bootstrap, validate, and test
 
 ci-pipelines: setup validate-pipelines test-pipelines ## CI-equivalent for pipelines
+
+tekton-dashboard: check-prereqs ## Install Tekton Dashboard (read-only) and port-forward to localhost:9097
+	@TEKTON_DASHBOARD_PORT="$(TEKTON_DASHBOARD_PORT)" "$(REPO_ROOT)/hack/deploy-tekton-dashboard.sh"

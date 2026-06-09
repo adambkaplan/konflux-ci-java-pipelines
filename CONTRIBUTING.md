@@ -58,6 +58,10 @@ Install the Tekton CLI with `make install-tkn` if needed.
 # One-time bootstrap (~15–30 min): kind cluster + konflux-ci dependencies
 make setup
 
+# Optional: install read-only Tekton Dashboard (blocks terminal on port-forward)
+make tekton-dashboard
+# Open http://localhost:9097 in a browser (run in a separate terminal while testing)
+
 # Run tests for the default task (task/maven-deploy)
 make test
 
