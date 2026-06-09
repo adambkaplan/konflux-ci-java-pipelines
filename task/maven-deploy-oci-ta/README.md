@@ -1,5 +1,10 @@
 # maven-deploy-oci-ta task
 
+Trusted Artifacts variant of [`maven-deploy`](../maven-deploy/README.md). The task
+YAML is **generated** from [`recipe.yaml`](recipe.yaml); do not edit
+[`maven-deploy-oci-ta.yaml`](maven-deploy-oci-ta.yaml) directly. Regenerate with
+`hack/generate-ta-tasks.sh`.
+
 Builds Maven project artifacts using the Maven `deploy` goal, then deploys a
 component build artifact to a container registry as an OCI image manifest.
 

@@ -3,6 +3,9 @@
 Tekton catalog repository for Java build and release pipelines used in
 [Konflux](https://konflux-ci.dev).
 
+Coding agents: see [AGENTS.md](AGENTS.md) for conventions, guardrails, and validation
+commands.
+
 This repository follows the same OCI bundle delivery model as
 [build-definitions](https://github.com/konflux-ci/build-definitions):
 

@@ -13,7 +13,7 @@ KONFLUX_CI_REF ?= 3a694f8d7b49e74f476bb9414fc3e6d03d50ae37
 KONFLUX_CI_DIR ?= .local/konflux-ci
 
 KIND_CLUSTER ?= kind
-TASK ?= task/maven-deploy-oci-ta/0.1
+TASK ?= task/maven-deploy
 TKN_VERSION ?= 0.38.1
 
 REPO_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))

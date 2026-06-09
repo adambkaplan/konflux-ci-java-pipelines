@@ -81,7 +81,7 @@ spec:
               echo "Created Maven project:"
               find "${SOURCE_DIR}" -type f -exec echo "  {}" \;
           - name: create-trusted-artifact
-            image: quay.io/konflux-ci/build-trusted-artifacts:latest@sha256:fb7ce11be542bc524be2c5ea78fd73c87a8a8cbf333905fcdf8b7cb700ad178a
+            image: quay.io/konflux-ci/build-trusted-artifacts:latest@sha256:5307eb0dd71e493851632526497b85640efe46cf2e1934856724489260c968ae
             args:
               - create
               - --store

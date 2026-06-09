@@ -1,0 +1,97 @@
+---
+- op: add
+  path: /spec/description
+  value: |
+    This pipeline builds Maven project artifacts and deploys them as a Konflux
+    component build artifact OCI image manifest.
+
+    v1 does not prefetch dependencies. Security scans run via IntegrationTestScenarios
+    per ADR-0048 (https://github.com/konflux-ci/architecture/blob/main/ADR/0048-movable-build-tests.md).
+
+    _Uses `git-clone` to clone the source repository into a workspace PVC, and
+    `maven-deploy` to run Maven and deploy the staged repository layout as a
+    Konflux component build artifact OCI image manifest._
+- op: replace
+  path: /metadata/name
+  value: maven-build
+- op: replace
+  path: /metadata/labels
+  value:
+    "pipelines.openshift.io/used-by": "build-cloud"
+    "pipelines.openshift.io/runtime": "generic"
+    "pipelines.openshift.io/strategy": "maven-repository"
+
+# Remove unused parameters from pipelines/template-build/template-build.yaml
+# $ yq ".spec.params.[].name" pipelines/template-build/template-build.yaml | nl -v 0
+#  0	git-url
+#  1	revision
+#  2	output-image
+#  3	skip-checks
+#  4	hermetic
+#  5	prefetch-input
+#  6	image-expires-after
+#  7	build-source-image
+#  8	enable-cache-proxy
+#  9	enable-package-registry-proxy
+# 10	sast-target-dirs
+# Kept: git-url, revision, output-image, image-expires-after, enable-cache-proxy
+
+- op: remove
+  path: /spec/params/10  # sast-target-dirs
+- op: remove
+  path: /spec/params/9   # enable-package-registry-proxy
+- op: remove
+  path: /spec/params/7   # build-source-image
+- op: remove
+  path: /spec/params/5   # prefetch-input
+- op: remove
+  path: /spec/params/4   # hermetic
+- op: remove
+  path: /spec/params/3   # skip-checks
+
+# Remove unused tasks from pipelines/template-build/template-build.yaml
+# $ yq ".spec.tasks.[].name" pipelines/template-build/template-build.yaml | nl -v 0
+#  0	init
+#  1	clone-repository
+#  2	prefetch-dependencies
+#  3	build-oci-artifact
+#  4	build-source-image
+#  5	sast-snyk-check
+#  6	apply-tags
+# Kept: init, clone-repository, build-oci-artifact (replaced below at index 2)
+
+- op: remove
+  path: /spec/tasks/6   # apply-tags
+- op: remove
+  path: /spec/tasks/5   # sast-snyk-check
+- op: remove
+  path: /spec/tasks/4   # build-source-image
+- op: remove
+  path: /spec/tasks/2   # prefetch-dependencies
+
+# Replace build-oci-artifact (template index 3, becomes index 2 after removals)
+- op: replace
+  path: /spec/tasks/2
+  value:
+    name: build-oci-artifact
+    params:
+    - name: IMAGE
+      value: $(params.output-image)
+    - name: IMAGE_EXPIRES_AFTER
+      value: $(params.image-expires-after)
+    runAfter:
+    - clone-repository
+    taskRef:
+      name: maven-deploy
+      version: "0.1"
+    workspaces:
+    - name: source
+      workspace: workspace
+
+# Remove netrc workspace; keep workspace and git-auth
+# $ yq ".spec.workspaces.[].name" pipelines/template-build/template-build.yaml | nl -v 0
+#  0	workspace
+#  1	git-auth
+#  2	netrc
+- op: remove
+  path: /spec/workspaces/2  # netrc
