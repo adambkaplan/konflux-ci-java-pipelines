@@ -437,7 +437,27 @@ in the upstream reposistory and avoids unnecessary merge conflicts.
 
 - workflow: [`.github/workflows/run-task-tests.yaml`](.github/workflows/run-task-tests.yaml)
 - tests script: [`.github/scripts/test_tekton_tasks.sh`](.github/scripts/test_tekton_tasks.sh)
-- validation script: [`.github/scripts/check_tekton_tasks.sh`](.github/scripts/check_tekton_tasks.sh)
+- validation script: [`.github/scripts/check_task_and_pipeline_yamls.sh`](.github/scripts/check_task_and_pipeline_yamls.sh)
+
+### Pipeline Validation and Integration Tests
+
+- workflow: [`.github/workflows/run-pipeline-tests.yaml`](.github/workflows/run-pipeline-tests.yaml)
+- tests script: [`.github/scripts/test_tekton_pipelines.sh`](.github/scripts/test_tekton_pipelines.sh)
+- render script: [`.github/scripts/render_pipeline_for_local_test.sh`](.github/scripts/render_pipeline_for_local_test.sh)
+- validation script: [`.github/scripts/check_task_and_pipeline_yamls.sh`](.github/scripts/check_task_and_pipeline_yamls.sh)
+
+On pull requests that modify `pipelines/**`, CI follows a two-stage model:
+
+1. **Syntax validation** — dry-run all pipelines (rendered temp copies; source YAML unchanged)
+2. **Integration tests** — run PipelineRun tests only for added or modified pipelines that have a `tests/` directory
+
+Pipeline rendering for local test/validation:
+
+- Local tasks (`task/<name>/`) → `taskRef: { name: <name> }`, applied to the test namespace
+- External tasks (`external-task/<name>/<version>/`) → Tekton bundle resolver refs from `task_bundle` digests
+
+Pipeline tests use `kind: PipelineRun` (not `Pipeline`). The pipeline itself is applied
+locally and is not added to a bundle.
 
 To ensure all Tekton Tasks are well-formed and valid, a single `Run Task Tests` workflow is executed on every pull request that modifies files in the `task/` directory.
 
@@ -460,6 +480,18 @@ This workflow is designed to be efficient by following a two-stage logic:
 
 5. Optionally, add a `pre-apply-task-hook.sh` to the `tests` directory.
 
+#### How to Add a Pipeline Test
+
+1. Create a `tests` directory under `pipelines/<name>/`.
+
+2. Inside `tests/`, create a file named `test-*.yaml` defining a Tekton `PipelineRun`.
+
+3. Reference the pipeline with `spec.pipelineRef.name` matching the pipeline metadata name.
+
+4. Provide all required `params` and `workspaces` bindings in the PipelineRun.
+
+5. Optionally, add `pre-apply-pipeline-hook.sh` to the `tests` directory.
+
 #### Example Structure
 
 ```plaintext
@@ -470,6 +502,17 @@ task
         ├── test-goodbye.yaml             👈 Test - A Pipeline named test-*.yaml
         ├── test-goodbye-2.yaml           👈 Test case 2
         └── pre-apply-task-hook.sh        👈 Optional hook
+```
+
+Pipeline test example structure:
+
+```plaintext
+pipelines
+└── maven-build
+    ├── maven-build.yaml
+    └── tests
+        ├── test-maven-build-happy-path.yaml   👈 Test - A PipelineRun named test-*.yaml
+        └── pre-apply-pipeline-hook.sh         👈 Optional hook
 ```
 
 #### Using a `pre-apply-task-hook.sh`

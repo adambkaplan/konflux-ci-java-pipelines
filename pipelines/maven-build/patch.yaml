@@ -69,6 +69,13 @@
 - op: remove
   path: /spec/tasks/2   # prefetch-dependencies
 
+# Clone into workspace root so maven-deploy finds pom.xml at $(workspaces.source.path)
+- op: add
+  path: /spec/tasks/1/params/-
+  value:
+    name: subdirectory
+    value: "."
+
 # Replace build-oci-artifact (template index 3, becomes index 2 after removals)
 - op: replace
   path: /spec/tasks/2
